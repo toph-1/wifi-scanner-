@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# toph41k Network Device Scanner v1.0
-# Scans your local network for connected devices
+# toph41k WiFi & Device Scanner v2.0
+# Scan your network for devices OR scan nearby WiFi networks
 # Author: toph41k
 
 # Colors
@@ -11,12 +11,14 @@ RED='\033[0;31m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 PURPLE='\033[0;35m'
+WHITE='\033[1;37m'
 NC='\033[0m' # No Color
 BOLD='\033[1m'
 
 # Temporary files
 TEMP_DIR="/tmp/toph41k_scan"
-RESULTS_FILE="$TEMP_DIR/devices.txt"
+DEVICE_RESULTS="$TEMP_DIR/devices.txt"
+WIFI_RESULTS="$TEMP_DIR/wifi.txt"
 mkdir -p "$TEMP_DIR"
 
 # Function to clear screen
@@ -28,19 +30,34 @@ clear_screen() {
 print_banner() {
     echo -e "${BLUE}${BOLD}"
     echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║              toph41k Network Device Scanner v1.0              ║"
-    echo "║              Find all devices connected to your WiFi          ║"
+    echo "║              toph41k WiFi & Device Scanner v2.0               ║"
+    echo "║         Scan your network OR scan nearby WiFi networks        ║"
     echo "║                      Author: toph41k                          ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
 }
 
-# Function to check and install dependencies
-check_deps() {
+# Function to print main menu
+print_main_menu() {
+    echo -e "${CYAN}${BOLD}MAIN MENU${NC}"
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║  ${WHITE}[1]${NC}  🔍 Scan MY network for connected devices           ║"
+    echo "║  ${WHITE}[2]${NC}  📡 Scan OTHER WiFi networks around me              ║"
+    echo "║  ${WHITE}[3]${NC}  📊 View scan history                              ║"
+    echo "║  ${WHITE}[4]${NC}  ℹ️  Network info                                    ║"
+    echo "║  ${WHITE}[5]${NC}  ❌ Exit                                            ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+}
+
+# ==================== DEVICE SCANNER (YOUR NETWORK) ====================
+
+# Function to check and install dependencies for device scanning
+check_device_deps() {
     local deps=("arp-scan" "nmap")
     local missing=()
     
-    echo -e "${YELLOW}[*] Checking dependencies...${NC}"
+    echo -e "${YELLOW}[*] Checking device scanner dependencies...${NC}"
     
     for dep in "${deps[@]}"; do
         if ! command -v "$dep" &> /dev/null; then
@@ -61,30 +78,35 @@ check_deps() {
             sudo pacman -S "${missing[@]}"
         else
             echo -e "${RED}[!] Please install manually: ${missing[*]}${NC}"
-            exit 1
+            return 1
         fi
     fi
     
-    echo -e "${GREEN}[✓] All dependencies satisfied${NC}"
+    echo -e "${GREEN}[✓] Device scanner ready${NC}"
     sleep 1
 }
 
-# Function to get network info
+# Function to get network info for device scanning
 get_network_info() {
-    echo -e "${CYAN}[*] Detecting network configuration...${NC}"
+    echo -e "${CYAN}[*] Detecting your network configuration...${NC}"
     
     # Get default interface
     INTERFACE=$(ip route | grep default | awk '{print $5}' | head -1)
     
     if [[ -z "$INTERFACE" ]]; then
-        INTERFACE="wlan0"
+        INTERFACE=$(ip link | grep -o '^[0-9]: [a-z0-9]*' | grep -v lo | head -1 | cut -d' ' -f2)
     fi
     
     # Get local IP and subnet
-    LOCAL_IP=$(ip -4 addr show "$INTERFACE" | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
+    LOCAL_IP=$(ip -4 addr show "$INTERFACE" 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
+    
+    if [[ -z "$LOCAL_IP" ]]; then
+        LOCAL_IP=$(hostname -I | awk '{print $1}')
+    fi
+    
     SUBNET=$(ip route | grep "$INTERFACE" | grep -v default | awk '{print $1}' | head -1)
     
-    if [[ -z "$SUBNET" ]]; then
+    if [[ -z "$SUBNET" && -n "$LOCAL_IP" ]]; then
         # Calculate subnet from IP
         IP_BASE=$(echo "$LOCAL_IP" | cut -d. -f1-3)
         SUBNET="$IP_BASE.0/24"
@@ -92,42 +114,58 @@ get_network_info() {
     
     echo -e "${GREEN}[✓] Interface: $INTERFACE${NC}"
     echo -e "${GREEN}[✓] Your IP: $LOCAL_IP${NC}"
-    echo -e "${GREEN}[✓] Scanning subnet: $SUBNET${NC}"
+    echo -e "${GREEN}[✓] Your network: $SUBNET${NC}"
     echo ""
 }
 
-# Function to scan with arp-scan (fast and reliable)
-scan_with_arp() {
-    echo -e "${YELLOW}[*] Scanning network with ARP (this takes about 10-30 seconds)...${NC}"
+# Function to scan for devices on your network
+scan_my_network() {
+    clear_screen
+    print_banner
+    echo -e "${GREEN}${BOLD}🔍 DEVICE SCANNER - Find devices on YOUR network${NC}"
+    echo "══════════════════════════════════════════════════════════════"
+    echo ""
+    
+    get_network_info
+    
+    echo -e "${YELLOW}[*] Scanning your network for connected devices...${NC}"
+    echo -e "${YELLOW}[*] This takes about 15-30 seconds...${NC}"
     echo ""
     
     # Run arp-scan
-    sudo arp-scan --localnet --interface "$INTERFACE" 2>/dev/null | grep -E '([0-9a-f]{2}:){5}[0-9a-f]{2}' > "$RESULTS_FILE"
+    sudo arp-scan --localnet --interface "$INTERFACE" 2>/dev/null | grep -E '([0-9a-f]{2}:){5}[0-9a-f]{2}' > "$DEVICE_RESULTS"
     
     # Check if we got results
-    if [[ ! -s "$RESULTS_FILE" ]]; then
-        echo -e "${RED}[!] No devices found with ARP scan${NC}"
+    if [[ ! -s "$DEVICE_RESULTS" ]]; then
+        echo -e "${RED}[!] No devices found!${NC}"
+        echo -e "${YELLOW}[!] Possible issues:${NC}"
+        echo "  • WiFi interface might be down"
+        echo "  • Try: sudo ip link set $INTERFACE up"
+        echo "  • Make sure you're connected to WiFi"
+        echo ""
         return 1
     fi
     
-    # Count devices
-    DEVICE_COUNT=$(wc -l < "$RESULTS_FILE")
-    
-    echo -e "${GREEN}[✓] Found $DEVICE_COUNT devices${NC}"
-    echo ""
-    
-    # Display results in a nice table
+    # Display devices
     display_devices
+    
+    # Save to history
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - Device Scan - Found $DEVICE_COUNT devices" >> "$TEMP_DIR/history.txt"
+    
+    # Device scan submenu
+    device_scan_menu
 }
 
-# Function to display devices in a formatted table
+# Function to display devices
 display_devices() {
+    DEVICE_COUNT=0
+    declare -A seen_ips
+    
     echo -e "${BLUE}${BOLD}══════════════════════════════════════════════════════════════════════════════════${NC}"
     printf "${WHITE}${BOLD}%-5s %-16s %-20s %-30s${NC}\n" "No." "IP Address" "MAC Address" "Device Info"
     echo -e "${BLUE}${BOLD}══════════════════════════════════════════════════════════════════════════════════${NC}"
     
     local count=1
-    declare -A seen_ips
     
     while read -r line; do
         # Extract IP and MAC
@@ -146,34 +184,34 @@ display_devices() {
             continue
         fi
         
-        # Color code based on vendor/device type
+        # Color code based on vendor
         device_color="$NC"
-        device_icon=""
+        device_icon="🔹 "
         
-        if [[ "$vendor" =~ iPhone|iPad|Apple|iOS ]]; then
+        if [[ "$vendor" =~ iPhone|iPad|Apple|iOS|Mac ]]; then
             device_color="$PURPLE"
             device_icon="🍎 "
-        elif [[ "$vendor" =~ Samsung|Android|OnePlus|Xiaomi|Huawei ]]; then
+        elif [[ "$vendor" =~ Samsung|Android|OnePlus|Xiaomi|Huawei|Google ]]; then
             device_color="$GREEN"
             device_icon="📱 "
-        elif [[ "$vendor" =~ Intel|Realtek|Broadcom|Atheros|Qualcomm ]]; then
+        elif [[ "$vendor" =~ Intel|Realtek|Broadcom|Atheros|Qualcomm|Microsoft ]]; then
             device_color="$CYAN"
             device_icon="💻 "
-        elif [[ "$vendor" =~ Raspberry|Pi|Arduino ]]; then
+        elif [[ "$vendor" =~ Raspberry|Pi|Arduino|Espressif ]]; then
             device_color="$YELLOW"
             device_icon="🤖 "
-        elif [[ "$vendor" =~ TP-Link|D-Link|Netgear|Linksys|Asus ]]; then
+        elif [[ "$vendor" =~ TP-Link|D-Link|Netgear|Linksys|Asus|Cisco ]]; then
             device_color="$RED"
             device_icon="📡 "
-        elif [[ "$vendor" =~ Sony|LG|Samsung|Panasonic|TV ]]; then
+        elif [[ "$vendor" =~ Sony|LG|Samsung|Panasonic|TV|Roku|Amazon ]]; then
             device_color="$BLUE"
             device_icon="📺 "
-        elif [[ "$vendor" =~ Canon|HP|Brother|Epson|Printer ]]; then
+        elif [[ "$vendor" =~ Canon|HP|Brother|Epson|Printer|Xerox ]]; then
             device_color="$YELLOW"
             device_icon="🖨️ "
-        else
-            device_color="$WHITE"
-            device_icon="🔹 "
+        elif [[ "$vendor" =~ Nest|Ring|Ecobee|Smart|Philips|Hue ]]; then
+            device_color="$CYAN"
+            device_icon="🏠 "
         fi
         
         # Truncate vendor if too long
@@ -181,7 +219,7 @@ display_devices() {
             vendor="${vendor:0:25}..."
         fi
         
-        # Get hostname if available
+        # Get hostname
         hostname=$(get_hostname "$ip")
         if [[ -n "$hostname" && "$hostname" != "$ip" ]]; then
             vendor="$vendor ($hostname)"
@@ -191,47 +229,79 @@ display_devices() {
                "$count." "$ip" "$mac" "$device_icon$vendor"
         
         ((count++))
-    done < "$RESULTS_FILE"
+        ((DEVICE_COUNT++))
+    done < "$DEVICE_RESULTS"
     
     echo -e "${BLUE}${BOLD}══════════════════════════════════════════════════════════════════════════════════${NC}"
-    echo -e "${GREEN}Total active devices: $((count-1))${NC}"
+    echo -e "${GREEN}Total devices found: $DEVICE_COUNT${NC}"
     echo ""
 }
 
-# Function to get hostname for IP
+# Function to get hostname
 get_hostname() {
     local ip=$1
     local hostname=""
     
-    # Try to get hostname via nmblookup (NetBIOS)
+    # Try nmblookup
     if command -v nmblookup &> /dev/null; then
         hostname=$(nmblookup -A "$ip" 2>/dev/null | grep -i "<00>" | grep -v "GROUP" | head -1 | awk '{print $1}')
     fi
     
-    # Try reverse DNS if nmblookup failed
-    if [[ -z "$hostname" ]]; then
+    # Try reverse DNS
+    if [[ -z "$hostname" && -f /usr/bin/dig ]]; then
         hostname=$(dig +short -x "$ip" 2>/dev/null | sed 's/\.$//')
     fi
     
     echo "$hostname"
 }
 
-# Function to do deep scan with nmap
-deep_scan() {
-    echo -e "${YELLOW}[*] Performing detailed device analysis (this takes about 1-2 minutes)...${NC}"
-    echo ""
-    
-    # Ask for device number
-    display_devices
-    echo -ne "${CYAN}Enter device number for deep scan (0 to skip): ${NC}"
+# Device scan submenu
+device_scan_menu() {
+    while true; do
+        echo -e "${CYAN}${BOLD}DEVICE SCAN OPTIONS:${NC}"
+        echo "╔════════════════════════════════════════════════════════╗"
+        echo "║  ${WHITE}[1]${NC}  Deep scan a specific device                     ║"
+        echo "║  ${WHITE}[2]${NC}  Export results                                 ║"
+        echo "║  ${WHITE}[3]${NC}  Scan again                                     ║"
+        echo "║  ${WHITE}[4]${NC}  Back to main menu                              ║"
+        echo "╚════════════════════════════════════════════════════════╝"
+        echo ""
+        echo -ne "${GREEN}Select option: ${NC}"
+        read device_choice
+        
+        case $device_choice in
+            1)
+                deep_scan_device
+                ;;
+            2)
+                export_device_results
+                ;;
+            3)
+                scan_my_network
+                break
+                ;;
+            4)
+                return
+                ;;
+            *)
+                echo -e "${RED}[!] Invalid option${NC}"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+# Function to deep scan a device
+deep_scan_device() {
+    echo -ne "${CYAN}Enter device number to deep scan: ${NC}"
     read choice
     
-    if [[ "$choice" == "0" || -z "$choice" ]]; then
+    if [[ -z "$choice" ]]; then
         return
     fi
     
     # Get IP of selected device
-    target_ip=$(sed -n "${choice}p" "$RESULTS_FILE" | awk '{print $1}')
+    target_ip=$(sed -n "${choice}p" "$DEVICE_RESULTS" | awk '{print $1}')
     
     if [[ -z "$target_ip" ]]; then
         echo -e "${RED}[!] Invalid selection${NC}"
@@ -244,7 +314,7 @@ deep_scan() {
     
     # Scan common ports
     echo -e "${BLUE}Open Ports:${NC}"
-    sudo nmap -sS -T4 -p 21,22,23,25,53,80,110,111,135,139,143,443,445,993,995,1723,3306,3389,5900,8080 "$target_ip" | grep -E '^[0-9]+/tcp' | sed 's/^/  /'
+    sudo nmap -sS -T4 -p 21,22,23,25,53,80,110,111,135,139,143,443,445,993,995,1723,3306,3389,5900,8080 "$target_ip" 2>/dev/null | grep -E '^[0-9]+/tcp' | sed 's/^/  /'
     
     # Detect OS
     echo -e "\n${BLUE}OS Detection:${NC}"
@@ -254,20 +324,14 @@ deep_scan() {
     read
 }
 
-# Function to export results
-export_results() {
-    if [[ ! -f "$RESULTS_FILE" ]]; then
-        echo -e "${RED}[!] No scan results to export${NC}"
-        sleep 2
-        return
-    fi
-    
+# Function to export device results
+export_device_results() {
     local filename="toph41k_devices_$(date '+%Y%m%d_%H%M%S').txt"
     
     {
-        echo "toph41k Network Device Scanner - Export File"
+        echo "toph41k Device Scanner - Export File"
         echo "Scan Date: $(date '+%Y-%m-%d %H:%M:%S')"
-        echo "Network: $SUBNET"
+        echo "Your Network: $SUBNET"
         echo "Your IP: $LOCAL_IP"
         echo "=================================================="
         echo ""
@@ -291,7 +355,7 @@ export_results() {
                 echo ""
                 ((count++))
             fi
-        done < "$RESULTS_FILE"
+        done < "$DEVICE_RESULTS"
         
     } > "$filename"
     
@@ -299,54 +363,374 @@ export_results() {
     sleep 2
 }
 
-# Main menu function
-show_menu() {
+# ==================== WIFI SCANNER (OTHER NETWORKS) ====================
+
+# Function to check WiFi scanner dependencies
+check_wifi_deps() {
+    if ! command -v nmcli &> /dev/null; then
+        echo -e "${YELLOW}[*] Installing network-manager for WiFi scanning...${NC}"
+        if command -v apt &> /dev/null; then
+            sudo apt install -y network-manager
+        elif command -v dnf &> /dev/null; then
+            sudo dnf install -y NetworkManager
+        elif command -v pacman &> /dev/null; then
+            sudo pacman -S networkmanager
+        fi
+    fi
+    echo -e "${GREEN}[✓] WiFi scanner ready${NC}"
+}
+
+# Function to scan other WiFi networks
+scan_other_wifis() {
+    clear_screen
+    print_banner
+    echo -e "${GREEN}${BOLD}📡 WIFI SCANNER - Find OTHER WiFi networks around you${NC}"
+    echo "══════════════════════════════════════════════════════════════"
+    echo ""
+    
+    # Enable WiFi if disabled
+    if command -v nmcli &> /dev/null; then
+        wifi_status=$(nmcli radio wifi)
+        if [[ "$wifi_status" == "disabled" ]]; then
+            echo -e "${YELLOW}[*] Enabling WiFi...${NC}"
+            nmcli radio wifi on
+            sleep 2
+        fi
+    fi
+    
+    echo -e "${YELLOW}[*] Scanning for nearby WiFi networks...${NC}"
+    echo -e "${YELLOW}[*] Please wait...${NC}"
+    echo ""
+    
+    # Try different scanning methods
+    if command -v nmcli &> /dev/null; then
+        scan_wifi_nmcli
+    elif command -v iwlist &> /dev/null; then
+        scan_wifi_iwlist
+    else
+        echo -e "${RED}[!] No WiFi scanning tool found!${NC}"
+        return 1
+    fi
+    
+    # Save to history
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - WiFi Scan - Found $WIFI_COUNT networks" >> "$TEMP_DIR/history.txt"
+    
+    # WiFi scan submenu
+    wifi_scan_menu
+}
+
+# Scan with nmcli
+scan_wifi_nmcli() {
+    # Get WiFi list
+    local temp_file="$WIFI_RESULTS"
+    nmcli -t -f SSID,SIGNAL,SECURITY,CHAN,BSSID device wifi list > "$temp_file" 2>/dev/null
+    
+    if [[ ! -s "$temp_file" ]]; then
+        echo -e "${RED}[!] No networks found or WiFi is disabled${NC}"
+        return 1
+    fi
+    
+    WIFI_COUNT=0
+    
+    echo -e "${BLUE}${BOLD}══════════════════════════════════════════════════════════════════════════════════${NC}"
+    printf "${WHITE}${BOLD}%-5s %-30s %-10s %-15s %-8s %s${NC}\n" "No." "Network Name (SSID)" "Signal" "Security" "Channel" "BSSID"
+    echo -e "${BLUE}${BOLD}══════════════════════════════════════════════════════════════════════════════════${NC}"
+    
+    local count=1
+    while IFS=: read -r ssid signal security channel bssid; do
+        # Skip empty or hidden networks
+        if [[ -z "$ssid" || "$ssid" == "--" ]]; then
+            ssid="Hidden Network"
+        fi
+        
+        # Clean up SSID
+        ssid=$(echo "$ssid" | tr -d '\\')
+        
+        # Color code signal
+        if [[ $signal -gt 70 ]]; then
+            signal_color="${GREEN}"
+        elif [[ $signal -gt 40 ]]; then
+            signal_color="${YELLOW}"
+        else
+            signal_color="${RED}"
+        fi
+        
+        # Truncate long SSID
+        if [[ ${#ssid} -gt 27 ]]; then
+            ssid="${ssid:0:24}..."
+        fi
+        
+        # Format security (truncate if needed)
+        if [[ ${#security} -gt 13 ]]; then
+            security="${security:0:10}..."
+        fi
+        
+        printf "%-5s %-30s ${signal_color}%-10s${NC} %-15s %-8s %s\n" \
+               "$count." "$ssid" "${signal}%" "$security" "${channel:-N/A}" "${bssid:0:17}"
+        
+        ((count++))
+        ((WIFI_COUNT++))
+    done < "$temp_file"
+    
+    echo -e "${BLUE}${BOLD}══════════════════════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}Total networks found: $WIFI_COUNT${NC}"
+    echo ""
+}
+
+# Scan with iwlist (backup)
+scan_wifi_iwlist() {
+    # Find wireless interface
+    local interface=$(iwconfig 2>/dev/null | grep -o '^[a-zA-Z0-9]*' | head -1)
+    
+    if [[ -z "$interface" ]]; then
+        interface="wlan0"
+    fi
+    
+    # Bring interface up
+    ip link set "$interface" up 2>/dev/null
+    
+    # Scan
+    local temp_file="/tmp/iwlist_scan.txt"
+    iwlist "$interface" scan 2>/dev/null > "$temp_file"
+    
+    if [[ ! -s "$temp_file" ]]; then
+        echo -e "${RED}[!] No networks found${NC}"
+        return 1
+    fi
+    
+    WIFI_COUNT=0
+    
+    echo -e "${BLUE}${BOLD}════════════════════════════════════════════════════════════════${NC}"
+    printf "${WHITE}${BOLD}%-5s %-30s %-10s${NC}\n" "No." "Network Name (SSID)" "Signal"
+    echo -e "${BLUE}${BOLD}════════════════════════════════════════════════════════════════${NC}"
+    
+    local count=1
+    local current_ssid=""
+    local current_quality=""
+    
+    while IFS= read -r line; do
+        if [[ "$line" =~ ESSID:\"([^\"]*)\" ]]; then
+            current_ssid="${BASH_REMATCH[1]}"
+            if [[ -z "$current_ssid" ]]; then
+                current_ssid="Hidden Network"
+            fi
+        fi
+        
+        if [[ "$line" =~ Quality=([0-9]+)/([0-9]+) ]]; then
+            current_quality=$(((${BASH_REMATCH[1]} * 100) / ${BASH_REMATCH[2]}))
+            
+            if [[ -n "$current_ssid" ]]; then
+                if [[ $current_quality -gt 70 ]]; then
+                    signal_color="${GREEN}"
+                elif [[ $current_quality -gt 40 ]]; then
+                    signal_color="${YELLOW}"
+                else
+                    signal_color="${RED}"
+                fi
+                
+                if [[ ${#current_ssid} -gt 27 ]]; then
+                    current_ssid="${current_ssid:0:24}..."
+                fi
+                
+                printf "%-5s %-30s ${signal_color}%-10s${NC}\n" \
+                       "$count." "$current_ssid" "${current_quality}%"
+                
+                ((count++))
+                ((WIFI_COUNT++))
+                current_ssid=""
+            fi
+        fi
+    done < "$temp_file"
+    
+    rm -f "$temp_file"
+    
+    echo -e "${BLUE}${BOLD}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}Total networks found: $WIFI_COUNT${NC}"
+    echo ""
+}
+
+# WiFi scan submenu
+wifi_scan_menu() {
+    while true; do
+        echo -e "${CYAN}${BOLD}WIFI SCAN OPTIONS:${NC}"
+        echo "╔════════════════════════════════════════════════════════╗"
+        echo "║  ${WHITE}[1]${NC}  Show WiFi details                               ║"
+        echo "║  ${WHITE}[2]${NC}  Export WiFi list                                ║"
+        echo "║  ${WHITE}[3]${NC}  Scan again                                      ║"
+        echo "║  ${WHITE}[4]${NC}  Back to main menu                               ║"
+        echo "╚════════════════════════════════════════════════════════╝"
+        echo ""
+        echo -ne "${GREEN}Select option: ${NC}"
+        read wifi_choice
+        
+        case $wifi_choice in
+            1)
+                show_wifi_details
+                ;;
+            2)
+                export_wifi_results
+                ;;
+            3)
+                scan_other_wifis
+                break
+                ;;
+            4)
+                return
+                ;;
+            *)
+                echo -e "${RED}[!] Invalid option${NC}"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+# Function to show WiFi details
+show_wifi_details() {
+    echo -ne "${CYAN}Enter network number for details: ${NC}"
+    read choice
+    
+    if [[ -z "$choice" ]]; then
+        return
+    fi
+    
+    if command -v nmcli &> /dev/null; then
+        local temp_file=$(mktemp)
+        nmcli -f ALL device wifi list > "$temp_file" 2>/dev/null
+        
+        local line_num=$((choice + 1))
+        local network_info=$(sed -n "${line_num}p" "$temp_file")
+        
+        if [[ -n "$network_info" ]]; then
+            echo ""
+            echo -e "${BLUE}════════════════════════════════════════════════════════════════${NC}"
+            echo -e "${WHITE}Network Details:${NC}"
+            echo -e "${BLUE}════════════════════════════════════════════════════════════════${NC}"
+            echo "$network_info" | sed 's/^/  /'
+            echo -e "${BLUE}════════════════════════════════════════════════════════════════${NC}"
+        else
+            echo -e "${RED}[!] Network not found${NC}"
+        fi
+        
+        rm "$temp_file"
+    fi
+    
+    echo -e "\n${YELLOW}Press Enter to continue...${NC}"
+    read
+}
+
+# Function to export WiFi results
+export_wifi_results() {
+    local filename="toph41k_wifis_$(date '+%Y%m%d_%H%M%S').txt"
+    
+    {
+        echo "toph41k WiFi Scanner - Export File"
+        echo "Scan Date: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "=================================================="
+        echo ""
+        echo "Nearby WiFi Networks:"
+        echo "--------------------"
+        
+        if command -v nmcli &> /dev/null; then
+            nmcli -f SSID,SIGNAL,SECURITY,CHAN,BSSID device wifi list >> "$filename"
+        fi
+        
+    } > "$filename"
+    
+    echo -e "${GREEN}[✓] Results exported to: $filename${NC}"
+    sleep 2
+}
+
+# ==================== HISTORY VIEWER ====================
+
+view_history() {
+    clear_screen
+    print_banner
+    echo -e "${GREEN}${BOLD}📊 SCAN HISTORY${NC}"
+    echo "══════════════════════════════════════════════════════════════"
+    echo ""
+    
+    if [[ -f "$TEMP_DIR/history.txt" ]]; then
+        cat "$TEMP_DIR/history.txt"
+    else
+        echo -e "${YELLOW}No scan history yet.${NC}"
+    fi
+    
+    echo ""
+    echo -e "${YELLOW}Press Enter to continue...${NC}"
+    read
+}
+
+# ==================== NETWORK INFO ====================
+
+show_network_info() {
+    clear_screen
+    print_banner
+    echo -e "${GREEN}${BOLD}ℹ️  NETWORK INFORMATION${NC}"
+    echo "══════════════════════════════════════════════════════════════"
+    echo ""
+    
+    echo -e "${CYAN}Network Interfaces:${NC}"
+    ip -4 addr show | grep -E '^[0-9]|inet ' | grep -v '127.0.0.1' | sed 's/^/  /'
+    
+    echo ""
+    echo -e "${CYAN}WiFi Status:${NC}"
+    if command -v nmcli &> /dev/null; then
+        echo "  WiFi Radio: $(nmcli radio wifi)"
+        echo "  Connected to: $(nmcli -t -f NAME connection show --active | head -1)"
+    fi
+    
+    echo ""
+    echo -e "${CYAN}Default Gateway:${NC}"
+    ip route | grep default | sed 's/^/  /'
+    
+    echo ""
+    echo -e "${CYAN}DNS Servers:${NC}"
+    cat /etc/resolv.conf 2>/dev/null | grep nameserver | sed 's/^/  /'
+    
+    echo ""
+    echo -e "${YELLOW}Press Enter to continue...${NC}"
+    read
+}
+
+# ==================== MAIN ====================
+
+# Main function
+main() {
+    # Check if running as root
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}[!] This script must be run as root (sudo)${NC}"
+        echo -e "${YELLOW}Usage: sudo $0${NC}"
+        exit 1
+    fi
+    
+    # Main menu loop
     while true; do
         clear_screen
         print_banner
+        print_main_menu
         
-        echo -e "${CYAN}${BOLD}MAIN MENU${NC}"
-        echo "╔════════════════════════════════════════════════════╗"
-        echo "║  ${WHITE}[1]${NC}  Scan for devices (ARP scan)                   ║"
-        echo "║  ${WHITE}[2]${NC}  Deep scan specific device                     ║"
-        echo "║  ${WHITE}[3]${NC}  Export results to file                        ║"
-        echo "║  ${WHITE}[4]${NC}  Show network info                             ║"
-        echo "║  ${WHITE}[5]${NC}  Exit                                          ║"
-        echo "╚════════════════════════════════════════════════════╝"
-        echo ""
         echo -ne "${GREEN}Select option (1-5): ${NC}"
         read choice
         
         case $choice in
             1)
-                clear_screen
-                print_banner
-                get_network_info
-                scan_with_arp
-                echo -e "\n${YELLOW}Press Enter to continue...${NC}"
-                read
+                check_device_deps
+                scan_my_network
                 ;;
             2)
-                if [[ ! -f "$RESULTS_FILE" ]]; then
-                    echo -e "${RED}[!] Please scan first (option 1)${NC}"
-                    sleep 2
-                else
-                    deep_scan
-                fi
+                check_wifi_deps
+                scan_other_wifis
                 ;;
             3)
-                export_results
+                view_history
                 ;;
             4)
-                clear_screen
-                print_banner
-                get_network_info
-                echo -e "\n${YELLOW}Press Enter to continue...${NC}"
-                read
+                show_network_info
                 ;;
             5)
                 echo -e "\n${GREEN}[✓] Goodbye!${NC}"
-                rm -rf "$TEMP_DIR"
+                rm -rf "$TEMP_DIR" 2>/dev/null
                 exit 0
                 ;;
             *)
@@ -357,48 +741,5 @@ show_menu() {
     done
 }
 
-# Function to show quick scan (one-liner version)
-quick_scan() {
-    echo -e "${GREEN}Quick device scan:${NC}"
-    echo "=================="
-    
-    # Get subnet
-    local subnet=$(ip route | grep -v default | grep wlan0 | awk '{print $1}' | head -1)
-    if [[ -z "$subnet" ]]; then
-        local ip=$(hostname -I | awk '{print $1}')
-        local base=$(echo "$ip" | cut -d. -f1-3)
-        subnet="$base.0/24"
-    fi
-    
-    # Quick ARP scan
-    sudo arp-scan "$subnet" 2>/dev/null | grep -E '([0-9a-f]{2}:){5}[0-9a-f]{2}' | while read -r line; do
-        ip=$(echo "$line" | awk '{print $1}')
-        mac=$(echo "$line" | awk '{print $2}')
-        vendor=$(echo "$line" | cut -d' ' -f3-)
-        printf "%-15s %-17s %s\n" "$ip" "$mac" "$vendor"
-    done
-}
-
-# Main execution
-main() {
-    # Check if running as root
-    if [[ $EUID -ne 0 ]]; then
-        echo -e "${RED}[!] This script must be run as root (sudo)${NC}"
-        echo -e "${YELLOW}Usage: sudo $0${NC}"
-        exit 1
-    fi
-    
-    # Check for quick mode
-    if [[ "$1" == "--quick" ]]; then
-        get_network_info
-        quick_scan
-        exit 0
-    fi
-    
-    # Normal mode
-    check_deps
-    show_menu
-}
-
-# Run main function with arguments
+# Run main
 main "$@"
