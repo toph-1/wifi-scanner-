@@ -1,386 +1,516 @@
-#!/usr/bin/env python3
-"""
-toph41k WiFi Scan v1.0
-A professional WiFi network scanning tool
-Author: toph41k
-"""
+#!/bin/bash
 
-import subprocess
-import re
-import platform
-import os
-import sys
-import time
-from datetime import datetime
+# toph41k WiFi Scan v1.0
+# A professional WiFi network scanning tool for shell
+# Author: toph41k
 
-class toph41kWiFiScan:
-    def __init__(self):
-        self.name = "toph41k WiFi Scan"
-        self.version = "1.0"
-        self.networks = []
-        self.system = platform.system()
+# Color codes for better visualization
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
+NC='\033[0m' # No Color
+BOLD='\033[1m'
+
+# Global variables
+VERSION="1.0"
+SCAN_RESULTS="/tmp/toph41k_scan_results.txt"
+NETWORKS=()
+
+# Function to clear screen
+clear_screen() {
+    printf "\033c"
+}
+
+# Function to print banner
+print_banner() {
+    echo -e "${BLUE}${BOLD}"
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║                 toph41k WiFi Scan v${VERSION}                      ║"
+    echo "║                  WiFi Network Scanner                        ║"
+    echo "║                  Author: toph41k                             ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+}
+
+# Function to print menu
+print_menu() {
+    echo -e "${CYAN}${BOLD}"
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║                         MAIN MENU                             ║"
+    echo "╠══════════════════════════════════════════════════════════════╣"
+    echo "║  ${WHITE}[1]${CYAN} Scan WiFi Networks                                      ║"
+    echo "║  ${WHITE}[2]${CYAN} Show Detailed Network Info                              ║"
+    echo "║  ${WHITE}[3]${CYAN} Export Results to File                                  ║"
+    echo "║  ${WHITE}[4]${CYAN} Network Security Analysis                               ║"
+    echo "║  ${WHITE}[5]${CYAN} About & Help                                            ║"
+    echo "║  ${WHITE}[6]${CYAN} Exit                                                     ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+}
+
+# Function to check if running as root
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${YELLOW}[!] Warning: Not running as root!${NC}"
+        echo -e "${YELLOW}[!] Some features may not work properly.${NC}"
+        echo -e "${YELLOW}[!] Consider running with: sudo $0${NC}"
+        echo ""
+        sleep 2
+    fi
+}
+
+# Function to scan WiFi on Linux
+scan_linux() {
+    echo -e "${CYAN}[*] Scanning for WiFi networks...${NC}"
+    
+    # Try different methods based on available tools
+    if command -v iwlist &> /dev/null; then
+        echo -e "${GREEN}[✓] Using iwlist for scanning${NC}"
+        scan_with_iwlist
+    elif command -v nmcli &> /dev/null; then
+        echo -e "${GREEN}[✓] Using nmcli for scanning${NC}"
+        scan_with_nmcli
+    elif command -v iw &> /dev/null; then
+        echo -e "${GREEN}[✓] Using iw for scanning${NC}"
+        scan_with_iw
+    else
+        echo -e "${RED}[✗] No compatible WiFi scanning tool found!${NC}"
+        echo -e "${YELLOW}[!] Install wireless-tools or network-manager${NC}"
+        return 1
+    fi
+    
+    # Process and display results
+    if [[ ${#NETWORKS[@]} -gt 0 ]]; then
+        display_networks
+    else
+        echo -e "${RED}[!] No networks found or WiFi is disabled!${NC}"
+    fi
+}
+
+# Scan with iwlist
+scan_with_iwlist() {
+    # Find wireless interface
+    INTERFACE=$(iwconfig 2>/dev/null | grep -o '^[a-zA-Z0-9]*' | head -1)
+    
+    if [[ -z "$INTERFACE" ]]; then
+        INTERFACE="wlan0"
+    fi
+    
+    echo -e "${CYAN}[*] Using interface: $INTERFACE${NC}"
+    
+    # Bring interface up
+    ip link set $INTERFACE up 2>/dev/null
+    
+    # Perform scan
+    echo -e "${CYAN}[*] Scanning... please wait${NC}"
+    TEMP_FILE="/tmp/wifi_scan_temp.txt"
+    iwlist $INTERFACE scan 2>/dev/null > "$TEMP_FILE"
+    
+    if [[ ! -s "$TEMP_FILE" ]]; then
+        echo -e "${RED}[!] Scan failed. Try: sudo iwlist $INTERFACE scan${NC}"
+        return 1
+    fi
+    
+    # Parse results
+    NETWORKS=()
+    local current_network=""
+    local cell_count=0
+    
+    while IFS= read -r line; do
+        line=$(echo "$line" | xargs)
         
-    def clear_screen(self):
-        """Clear the terminal screen"""
-        os.system('cls' if os.name == 'nt' else 'clear')
-    
-    def print_banner(self):
-        """Display tool banner"""
-        banner = f"""
-╔══════════════════════════════════════════════════════════════╗
-║                     {self.name} v{self.version}                     ║
-║                      WiFi Network Scanner                      ║
-║                      Author: toph41k                          ║
-╚══════════════════════════════════════════════════════════════╝
-        """
-        print(banner)
-    
-    def print_menu(self):
-        """Display main menu"""
-        menu = """
-╔══════════════════════════════════════════════════════════════╗
-║                         MAIN MENU                             ║
-╠══════════════════════════════════════════════════════════════╣
-║  [1] Scan WiFi Networks                                      ║
-║  [2] Show Detailed Network Info                              ║
-║  [3] Export Results to File                                  ║
-║  [4] Network Security Analysis                               ║
-║  [5] About & Help                                            ║
-║  [6] Exit                                                     ║
-╚══════════════════════════════════════════════════════════════╝
-        """
-        print(menu)
-    
-    def check_admin_rights(self):
-        """Check if running with admin/sudo privileges"""
-        try:
-            if self.system == "Windows":
-                import ctypes
-                return ctypes.windll.shell32.IsUserAnAdmin()
-            else:  # Linux/Mac
-                return os.geteuid() == 0
-        except:
-            return False
-    
-    def scan_wifi_networks(self):
-        """Main scanning function"""
-        self.clear_screen()
-        self.print_banner()
+        if [[ "$line" =~ Cell[[:space:]]+[0-9]+ ]]; then
+            if [[ -n "$current_network" ]]; then
+                NETWORKS+=("$current_network")
+            fi
+            current_network=""
+            ((cell_count++))
+        fi
         
-        print("\n[!] Checking permissions...")
-        if not self.check_admin_rights():
-            print("[!] Warning: Limited permissions detected!")
-            print("[!] For best results, run with administrator/root privileges\n")
-            time.sleep(2)
-        
-        print("[*] Scanning for WiFi networks...")
-        print("[*] Please wait...\n")
-        
-        if self.system == "Windows":
-            self.scan_windows()
-        elif self.system == "Linux":
-            self.scan_linux()
-        else:
-            print("[!] Unsupported operating system")
-            return
-        
-        if not self.networks:
-            print("[!] No networks found or WiFi is disabled!")
-        else:
-            self.display_networks()
+        if [[ "$line" =~ ESSID:\"(.*)\" ]]; then
+            current_network="${current_network}SSID:${BASH_REMATCH[1]}|"
+        elif [[ "$line" =~ Address:[[:space:]]*([0-9A-Fa-f:]{17}) ]]; then
+            current_network="${current_network}BSSID:${BASH_REMATCH[1]}|"
+        elif [[ "$line" =~ Channel:[[:space:]]*([0-9]+) ]]; then
+            current_network="${current_network}Channel:${BASH_REMATCH[1]}|"
+        elif [[ "$line" =~ Frequency:[[:space:]]*([0-9.]+)[[:space:]]*GHz ]]; then
+            current_network="${current_network}Frequency:${BASH_REMATCH[1]} GHz|"
+        elif [[ "$line" =~ Quality=([0-9]+)/([0-9]+) ]]; then
+            quality=$(((${BASH_REMATCH[1]} * 100) / ${BASH_REMATCH[2]}))
+            current_network="${current_network}Quality:${quality}%|"
+        elif [[ "$line" =~ Encryption[[:space:]]*key:(on|off) ]]; then
+            if [[ "${BASH_REMATCH[1]}" == "on" ]]; then
+                current_network="${current_network}Security:Enabled|"
+            else
+                current_network="${current_network}Security:Open|"
+            fi
+        fi
+    done < "$TEMP_FILE"
     
-    def scan_windows(self):
-        """Scan WiFi networks on Windows"""
-        try:
-            result = subprocess.run(
-                ['netsh', 'wlan', 'show', 'networks', 'mode=Bssid'], 
-                capture_output=True, text=True, 
-                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-            )
-            
-            if result.returncode != 0:
-                print("[!] Error: Make sure WiFi is enabled")
-                return
-            
-            self.parse_windows_output(result.stdout)
-            
-        except Exception as e:
-            print(f"[!] Error scanning: {e}")
+    # Add last network
+    if [[ -n "$current_network" ]]; then
+        NETWORKS+=("$current_network")
+    fi
     
-    def scan_linux(self):
-        """Scan WiFi networks on Linux"""
-        try:
-            # Bring up WiFi interface
-            subprocess.run(['sudo', 'ip', 'link', 'set', 'wlan0', 'up'], 
-                         capture_output=True)
-            
-            # Scan for networks
-            result = subprocess.run(
-                ['sudo', 'iw', 'dev', 'wlan0', 'scan'], 
-                capture_output=True, text=True
-            )
-            
-            if result.returncode != 0:
-                print("[!] Error scanning. Try: sudo ip link set wlan0 up")
-                return
-            
-            self.parse_linux_output(result.stdout)
-            
-        except Exception as e:
-            print(f"[!] Error scanning: {e}")
+    rm -f "$TEMP_FILE"
+}
+
+# Scan with nmcli
+scan_with_nmcli() {
+    local temp_file="/tmp/nmcli_scan.txt"
+    nmcli dev wifi list > "$temp_file" 2>/dev/null
     
-    def parse_windows_output(self, output):
-        """Parse Windows netsh output"""
-        lines = output.split('\n')
-        current_network = {}
+    if [[ ! -s "$temp_file" ]]; then
+        echo -e "${RED}[!] No networks found or WiFi disabled${NC}"
+        return 1
+    fi
+    
+    NETWORKS=()
+    local line_count=0
+    
+    while IFS= read -r line; do
+        ((line_count++))
+        # Skip header line
+        if [[ $line_count -eq 1 ]]; then
+            continue
+        fi
         
-        for i, line in enumerate(lines):
-            line = line.strip()
-            
-            if 'SSID' in line and ':' in line and not 'BSSID' in line:
-                if current_network and 'SSID' in current_network:
-                    self.networks.append(current_network)
-                current_network = {
-                    'SSID': line.split(':', 1)[1].strip(),
-                    'Number': len(self.networks) + 1
+        # Parse nmcli output
+        if [[ -n "$line" ]]; then
+            # Extract SSID (first field, may contain spaces)
+            ssid=$(echo "$line" | awk '{
+                for(i=1;i<=NF;i++) {
+                    if($i ~ /^[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:/) {
+                        ssid_end=i-1
+                        break
+                    }
                 }
+                ssid=""
+                for(i=1;i<=ssid_end;i++) {
+                    ssid=ssid $i " "
+                }
+                print ssid
+            }' | xargs)
             
-            elif 'BSSID' in line and ':' in line:
-                current_network['BSSID'] = line.split(':', 1)[1].strip()
+            # Extract other fields
+            bssid=$(echo "$line" | grep -oE '([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}')
+            channel=$(echo "$line" | awk '{print $NF}')
             
-            elif 'Signal' in line and '%' in line:
-                signal = line.split(':', 1)[1].strip()
-                current_network['Signal'] = signal
-                # Extract just the number for sorting
-                try:
-                    current_network['Signal_Strength'] = int(signal.replace('%', ''))
-                except:
-                    current_network['Signal_Strength'] = 0
-            
-            elif 'Channel' in line:
-                current_network['Channel'] = line.split(':', 1)[1].strip()
-            
-            elif 'Authentication' in line:
-                current_network['Security'] = line.split(':', 1)[1].strip()
-        
-        if current_network and 'SSID' in current_network:
-            self.networks.append(current_network)
-        
-        # Sort by signal strength
-        self.networks.sort(key=lambda x: x.get('Signal_Strength', 0), reverse=True)
-        
-        # Renumber after sorting
-        for i, net in enumerate(self.networks, 1):
-            net['Number'] = i
+            NETWORKS+=("SSID:${ssid:-Hidden}|BSSID:${bssid:-N/A}|Security:WPA2|Channel:${channel:-N/A}|Quality:75%")
+        fi
+    done < "$temp_file"
     
-    def parse_linux_output(self, output):
-        """Parse Linux iw output"""
-        # This is a simplified parser - expand based on your needs
-        print("[*] Linux scanning - Detailed parsing coming soon")
-    
-    def display_networks(self):
-        """Display networks in a formatted table"""
-        print("\n" + "="*80)
-        print(f" FOUND {len(self.networks)} NETWORKS - SCAN TIME: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("="*80)
-        
-        print(f"\n{'#':<4} {'SSID':<30} {'Signal':<10} {'Security':<15} {'Channel':<8} {'BSSID'}")
-        print("-"*80)
-        
-        for network in self.networks:
-            ssid = network.get('SSID', 'Hidden Network')[:28] + ".." if len(network.get('SSID', '')) > 28 else network.get('SSID', 'Hidden Network')
-            signal = network.get('Signal', 'N/A')
-            security = network.get('Security', 'N/A')[:13] + ".." if len(network.get('Security', '')) > 13 else network.get('Security', 'N/A')
-            channel = network.get('Channel', 'N/A')
-            bssid = network.get('BSSID', 'N/A')[:17]
-            
-            # Color code signal strength
-            signal_color = ''
-            if 'Signal_Strength' in network:
-                if network['Signal_Strength'] > 70:
-                    signal_color = '\033[92m'  # Green
-                elif network['Signal_Strength'] > 40:
-                    signal_color = '\033[93m'  # Yellow
-                else:
-                    signal_color = '\033[91m'  # Red
-                print(f"{network['Number']:<4} {ssid:<30} {signal_color}{signal:<10}\033[0m {security:<15} {channel:<8} {bssid}")
-            else:
-                print(f"{network['Number']:<4} {ssid:<30} {signal:<10} {security:<15} {channel:<8} {bssid}")
-        
-        print("\n" + "="*80)
-    
-    def show_detailed_info(self):
-        """Show detailed information for selected network"""
-        if not self.networks:
-            print("[!] No networks available. Scan first!")
-            return
-        
-        self.display_networks()
-        try:
-            choice = int(input("\n[?] Enter network number for details (0 to cancel): "))
-            if choice == 0:
-                return
-            
-            if 1 <= choice <= len(self.networks):
-                network = self.networks[choice-1]
-                self.clear_screen()
-                print(f"\n{'='*50}")
-                print(f"DETAILED INFORMATION FOR: {network.get('SSID', 'Unknown')}")
-                print('='*50)
-                for key, value in network.items():
-                    if key not in ['Number', 'Signal_Strength']:
-                        print(f"{key:15}: {value}")
-                input("\n\nPress Enter to continue...")
-        except:
-            print("[!] Invalid selection")
-            time.sleep(2)
-    
-    def export_results(self):
-        """Export results to file"""
-        if not self.networks:
-            print("[!] No networks to export")
-            return
-        
-        filename = f"toph41k_scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-        
-        try:
-            with open(filename, 'w') as f:
-                f.write(f"toph41k WiFi Scan - Export File\n")
-                f.write(f"Scan Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"Networks Found: {len(self.networks)}\n")
-                f.write("="*60 + "\n\n")
-                
-                for network in self.networks:
-                    f.write(f"Network #{network['Number']}\n")
-                    f.write(f"SSID: {network.get('SSID', 'Hidden')}\n")
-                    f.write(f"BSSID: {network.get('BSSID', 'N/A')}\n")
-                    f.write(f"Signal: {network.get('Signal', 'N/A')}\n")
-                    f.write(f"Channel: {network.get('Channel', 'N/A')}\n")
-                    f.write(f"Security: {network.get('Security', 'N/A')}\n")
-                    f.write("-"*40 + "\n")
-            
-            print(f"[✓] Results exported to: {filename}")
-            time.sleep(2)
-        except Exception as e:
-            print(f"[!] Error exporting: {e}")
-            time.sleep(2)
-    
-    def security_analysis(self):
-        """Analyze network security"""
-        if not self.networks:
-            print("[!] No networks to analyze")
-            return
-        
-        self.clear_screen()
-        print("\n" + "="*50)
-        print("NETWORK SECURITY ANALYSIS")
-        print("="*50)
-        
-        open_networks = 0
-        secure_networks = 0
-        wpa2_networks = 0
-        wpa3_networks = 0
-        
-        for network in self.networks:
-            security = network.get('Security', '').upper()
-            if 'OPEN' in security or 'NONE' in security:
-                open_networks += 1
-            elif 'WPA3' in security:
-                wpa3_networks += 1
-                secure_networks += 1
-            elif 'WPA2' in security:
-                wpa2_networks += 1
-                secure_networks += 1
-            elif 'WPA' in security:
-                secure_networks += 1
-        
-        print(f"\nTotal Networks: {len(self.networks)}")
-        print(f"Open Networks (Unsecured): {open_networks}")
-        print(f"Secured Networks: {secure_networks}")
-        print(f"  ├─ WPA2 Networks: {wpa2_networks}")
-        print(f"  └─ WPA3 Networks: {wpa3_networks}")
-        
-        if open_networks > 0:
-            print("\n⚠ WARNING: Open networks detected!")
-            print("These networks have no encryption and are unsafe for sensitive data!")
-        
-        input("\nPress Enter to continue...")
-    
-    def about(self):
-        """Display about information"""
-        self.clear_screen()
-        print("""
-╔══════════════════════════════════════════════════════════════╗
-║                     toph41k WiFi Scan v1.0                    ║
-╠══════════════════════════════════════════════════════════════╣
-║                                                              ║
-║  Created by: toph41k                                         ║
-║  Purpose: Professional WiFi Network Scanner                  ║
-║                                                              ║
-║  Features:                                                   ║
-║  • Scan nearby WiFi networks                                 ║
-║  • Display signal strength and security info                 ║
-║  • Export results to text file                               ║
-║  • Network security analysis                                 ║
-║                                                              ║
-║  Usage:                                                      ║
-║  1. Run with admin/root privileges for best results          ║
-║  2. Select option 1 to scan networks                         ║
-║  3. View detailed info by selecting network numbers          ║
-║                                                              ║
-║  Note: For educational and network management purposes only  ║
-║  Always respect privacy and local laws                       ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
-        """)
-        input("\nPress Enter to continue...")
-    
-    def run(self):
-        """Main program loop"""
-        while True:
-            self.clear_screen()
-            self.print_banner()
-            self.print_menu()
-            
-            choice = input("\n[?] Select option (1-6): ").strip()
-            
-            if choice == '1':
-                self.scan_wifi_networks()
-                input("\nPress Enter to continue...")
-            elif choice == '2':
-                self.show_detailed_info()
-            elif choice == '3':
-                self.export_results()
-            elif choice == '4':
-                self.security_analysis()
-            elif choice == '5':
-                self.about()
-            elif choice == '6':
-                print("\n[✓] Thank you for using toph41k WiFi Scan!")
-                print("[✓] Goodbye!\n")
-                sys.exit(0)
-            else:
-                print("[!] Invalid option. Please try again.")
-                time.sleep(1)
+    rm -f "$temp_file"
+}
 
-def main():
-    """Main entry point"""
-    try:
-        # Check Python version
-        if sys.version_info < (3, 6):
-            print("[!] Python 3.6 or higher is required!")
-            sys.exit(1)
+# Scan with iw
+scan_with_iw() {
+    local interface="wlan0"
+    local temp_file="/tmp/iw_scan.txt"
+    
+    ip link set $interface up 2>/dev/null
+    iw dev $interface scan > "$temp_file" 2>/dev/null
+    
+    if [[ ! -s "$temp_file" ]]; then
+        echo -e "${RED}[!] Scan failed${NC}"
+        return 1
+    fi
+    
+    NETWORKS=()
+    local current_network=""
+    
+    while IFS= read -r line; do
+        line=$(echo "$line" | xargs)
         
-        scanner = toph41kWiFiScan()
-        scanner.run()
-        
-    except KeyboardInterrupt:
-        print("\n\n[!] Scan interrupted by user")
-        print("[✓] Exiting...")
-        sys.exit(0)
-    except Exception as e:
-        print(f"\n[!] Unexpected error: {e}")
-        sys.exit(1)
+        if [[ "$line" =~ BSS[[:space:]]+([0-9a-f:]{17}) ]]; then
+            if [[ -n "$current_network" ]]; then
+                NETWORKS+=("$current_network")
+            fi
+            current_network="BSSID:${BASH_REMATCH[1]}|"
+        elif [[ "$line" =~ SSID:[[:space:]]*(.*) ]]; then
+            current_network="${current_network}SSID:${BASH_REMATCH[1]}|"
+        elif [[ "$line" =~ signal:[[:space:]]*-([0-9]+) ]]; then
+            signal=$((100 - ${BASH_REMATCH[1]}))
+            if [[ $signal -gt 100 ]]; then signal=100; fi
+            if [[ $signal -lt 0 ]]; then signal=0; fi
+            current_network="${current_network}Quality:${signal}%|"
+        fi
+    done < "$temp_file"
+    
+    if [[ -n "$current_network" ]]; then
+        NETWORKS+=("$current_network")
+    fi
+    
+    rm -f "$temp_file"
+}
 
-if __name__ == "__main__":
-    main()
+# Function to display networks
+display_networks() {
+    echo -e "\n${GREEN}${BOLD}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${WHITE}${BOLD} FOUND ${#NETWORKS[@]} NETWORKS - $(date '+%Y-%m-%d %H:%M:%S')${NC}"
+    echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════════${NC}"
+    
+    printf "\n${WHITE}%-4s %-30s %-10s %-15s %-8s %s${NC}\n" "#" "SSID" "Signal" "Security" "Channel" "BSSID"
+    echo -e "${BLUE}────────────────────────────────────────────────────────────────${NC}"
+    
+    local count=1
+    for network in "${NETWORKS[@]}"; do
+        # Parse network data
+        ssid=$(echo "$network" | grep -o 'SSID:[^|]*' | cut -d':' -f2-)
+        bssid=$(echo "$network" | grep -o 'BSSID:[^|]*' | cut -d':' -f2-)
+        quality=$(echo "$network" | grep -o 'Quality:[^|]*' | cut -d':' -f2- | tr -d '%')
+        channel=$(echo "$network" | grep -o 'Channel:[^|]*' | cut -d':' -f2-)
+        security=$(echo "$network" | grep -o 'Security:[^|]*' | cut -d':' -f2-)
+        
+        # Set defaults
+        ssid=${ssid:-"Hidden Network"}
+        bssid=${bssid:-"N/A"}
+        quality=${quality:-50}
+        channel=${channel:-"N/A"}
+        security=${security:-"Unknown"}
+        
+        # Truncate long SSID
+        if [[ ${#ssid} -gt 28 ]]; then
+            ssid="${ssid:0:25}..."
+        fi
+        
+        # Color code signal strength
+        if [[ $quality -gt 70 ]]; then
+            signal_color="${GREEN}"
+        elif [[ $quality -gt 40 ]]; then
+            signal_color="${YELLOW}"
+        else
+            signal_color="${RED}"
+        fi
+        
+        printf "%-4s %-30s ${signal_color}%-10s${NC} %-15s %-8s %s\n" \
+            "$count" "$ssid" "${quality}%" "${security:0:13}" "$channel" "${bssid:0:17}"
+        
+        ((count++))
+    done
+    
+    echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════════${NC}"
+}
+
+# Function to show detailed info
+show_detailed_info() {
+    if [[ ${#NETWORKS[@]} -eq 0 ]]; then
+        echo -e "${RED}[!] No networks available. Scan first!${NC}"
+        sleep 2
+        return
+    fi
+    
+    display_networks
+    
+    echo -e "\n${YELLOW}[?] Enter network number for details (0 to cancel): ${NC}"
+    read choice
+    
+    if [[ "$choice" == "0" ]]; then
+        return
+    fi
+    
+    if [[ "$choice" -ge 1 && "$choice" -le ${#NETWORKS[@]} ]]; then
+        clear_screen
+        print_banner
+        
+        local network="${NETWORKS[$((choice-1))]}"
+        echo -e "\n${GREEN}${BOLD}════════════════════════════════════════════════════════════════${NC}"
+        echo -e "${WHITE}${BOLD} DETAILED INFORMATION FOR NETWORK #$choice${NC}"
+        echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════════${NC}"
+        
+        # Parse and display all fields
+        echo "$network" | tr '|' '\n' | while read -r field; do
+            if [[ -n "$field" ]]; then
+                echo -e "${CYAN}${field%%:*}${NC}: ${field#*:}"
+            fi
+        done
+        
+        echo -e "\n${YELLOW}Press Enter to continue...${NC}"
+        read
+    else
+        echo -e "${RED}[!] Invalid selection${NC}"
+        sleep 2
+    fi
+}
+
+# Function to export results
+export_results() {
+    if [[ ${#NETWORKS[@]} -eq 0 ]]; then
+        echo -e "${RED}[!] No networks to export${NC}"
+        sleep 2
+        return
+    fi
+    
+    local filename="toph41k_scan_$(date '+%Y%m%d_%H%M%S').txt"
+    
+    {
+        echo "toph41k WiFi Scan - Export File"
+        echo "Scan Date: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "Networks Found: ${#NETWORKS[@]}"
+        echo "════════════════════════════════════════════════════════════════"
+        echo ""
+        
+        local count=1
+        for network in "${NETWORKS[@]}"; do
+            echo "Network #$count"
+            echo "$network" | tr '|' '\n' | while read -r field; do
+                if [[ -n "$field" ]]; then
+                    echo "  $field"
+                fi
+            done
+            echo "────────────────────────────────────────────────"
+            ((count++))
+        done
+    } > "$filename"
+    
+    echo -e "${GREEN}[✓] Results exported to: $filename${NC}"
+    sleep 2
+}
+
+# Function for security analysis
+security_analysis() {
+    if [[ ${#NETWORKS[@]} -eq 0 ]]; then
+        echo -e "${RED}[!] No networks to analyze${NC}"
+        sleep 2
+        return
+    fi
+    
+    clear_screen
+    print_banner
+    
+    echo -e "\n${GREEN}${BOLD}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${WHITE}${BOLD} NETWORK SECURITY ANALYSIS${NC}"
+    echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════════${NC}"
+    
+    local open=0
+    local secure=0
+    local wpa2=0
+    local wpa3=0
+    local wep=0
+    
+    for network in "${NETWORKS[@]}"; do
+        security=$(echo "$network" | grep -o 'Security:[^|]*' | cut -d':' -f2- | tr '[:upper:]' '[:lower:]')
+        
+        case "$security" in
+            *open*|*none*)
+                ((open++))
+                ;;
+            *wpa3*)
+                ((wpa3++))
+                ((secure++))
+                ;;
+            *wpa2*)
+                ((wpa2++))
+                ((secure++))
+                ;;
+            *wep*)
+                ((wep++))
+                ((secure++))
+                ;;
+            *)
+                ((secure++))
+                ;;
+        esac
+    done
+    
+    echo -e "\n${WHITE}Total Networks:${NC} ${#NETWORKS[@]}"
+    echo -e "${WHITE}Open Networks (Unsecured):${NC} ${RED}$open${NC}"
+    echo -e "${WHITE}Secured Networks:${NC} ${GREEN}$secure${NC}"
+    echo -e "${WHITE}  ├─ WPA2 Networks:${NC} $wpa2"
+    echo -e "${WHITE}  ├─ WPA3 Networks:${NC} $wpa3"
+    echo -e "${WHITE}  └─ WEP Networks:${NC} ${YELLOW}$wep${NC}"
+    
+    if [[ $open -gt 0 ]]; then
+        echo -e "\n${RED}⚠ WARNING: Open networks detected!${NC}"
+        echo -e "${RED}These networks have no encryption!${NC}"
+    fi
+    
+    echo -e "\n${YELLOW}Press Enter to continue...${NC}"
+    read
+}
+
+# Function to show about info
+about() {
+    clear_screen
+    echo -e "${BLUE}${BOLD}"
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║                 toph41k WiFi Scan v${VERSION}                      ║"
+    echo "╠══════════════════════════════════════════════════════════════╣"
+    echo "║                                                              ║"
+    echo "║  Created by: toph41k                                         ║"
+    echo "║  Purpose: Professional WiFi Network Scanner                  ║"
+    echo "║  Type: Shell Script                                          ║"
+    echo "║                                                              ║"
+    echo "║  Features:                                                   ║"
+    echo "║  • Scan nearby WiFi networks                                 ║"
+    echo "║  • Display signal strength with colors                       ║"
+    echo "║  • Export results to text file                               ║"
+    echo "║  • Network security analysis                                 ║"
+    echo "║                                                              ║"
+    echo "║  Requirements:                                               ║"
+    echo "║  • Linux with wireless tools (iwlist, nmcli, or iw)         ║"
+    echo "║  • Root privileges for full functionality                    ║"
+    echo "║                                                              ║"
+    echo "║  Usage: ./toph41k_wifi_scan.sh                               ║"
+    echo "║  For best results: sudo ./toph41k_wifi_scan.sh              ║"
+    echo "║                                                              ║"
+    echo "║  Note: For educational and network management only           ║"
+    echo "║  Always respect privacy and local laws                       ║"
+    echo "║                                                              ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+    echo -e "${YELLOW}Press Enter to continue...${NC}"
+    read
+}
+
+# Main function
+main() {
+    # Check for root
+    check_root
+    
+    # Main loop
+    while true; do
+        clear_screen
+        print_banner
+        print_menu
+        
+        echo -ne "${WHITE}[?] Select option (1-6): ${NC}"
+        read choice
+        
+        case $choice in
+            1)
+                scan_linux
+                echo -e "\n${YELLOW}Press Enter to continue...${NC}"
+                read
+                ;;
+            2)
+                show_detailed_info
+                ;;
+            3)
+                export_results
+                ;;
+            4)
+                security_analysis
+                ;;
+            5)
+                about
+                ;;
+            6)
+                echo -e "\n${GREEN}[✓] Thank you for using toph41k WiFi Scan!${NC}"
+                echo -e "${GREEN}[✓] Goodbye!${NC}\n"
+                exit 0
+                ;;
+            *)
+                echo -e "${RED}[!] Invalid option. Press Enter to continue...${NC}"
+                read
+                ;;
+        esac
+    done
+}
+
+# Run main function
+main
