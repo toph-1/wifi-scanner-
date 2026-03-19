@@ -1,0 +1,386 @@
+#!/usr/bin/env python3
+"""
+toph41k WiFi Scan v1.0
+A professional WiFi network scanning tool
+Author: toph41k
+"""
+
+import subprocess
+import re
+import platform
+import os
+import sys
+import time
+from datetime import datetime
+
+class toph41kWiFiScan:
+    def __init__(self):
+        self.name = "toph41k WiFi Scan"
+        self.version = "1.0"
+        self.networks = []
+        self.system = platform.system()
+        
+    def clear_screen(self):
+        """Clear the terminal screen"""
+        os.system('cls' if os.name == 'nt' else 'clear')
+    
+    def print_banner(self):
+        """Display tool banner"""
+        banner = f"""
+╔══════════════════════════════════════════════════════════════╗
+║                     {self.name} v{self.version}                     ║
+║                      WiFi Network Scanner                      ║
+║                      Author: toph41k                          ║
+╚══════════════════════════════════════════════════════════════╝
+        """
+        print(banner)
+    
+    def print_menu(self):
+        """Display main menu"""
+        menu = """
+╔══════════════════════════════════════════════════════════════╗
+║                         MAIN MENU                             ║
+╠══════════════════════════════════════════════════════════════╣
+║  [1] Scan WiFi Networks                                      ║
+║  [2] Show Detailed Network Info                              ║
+║  [3] Export Results to File                                  ║
+║  [4] Network Security Analysis                               ║
+║  [5] About & Help                                            ║
+║  [6] Exit                                                     ║
+╚══════════════════════════════════════════════════════════════╝
+        """
+        print(menu)
+    
+    def check_admin_rights(self):
+        """Check if running with admin/sudo privileges"""
+        try:
+            if self.system == "Windows":
+                import ctypes
+                return ctypes.windll.shell32.IsUserAnAdmin()
+            else:  # Linux/Mac
+                return os.geteuid() == 0
+        except:
+            return False
+    
+    def scan_wifi_networks(self):
+        """Main scanning function"""
+        self.clear_screen()
+        self.print_banner()
+        
+        print("\n[!] Checking permissions...")
+        if not self.check_admin_rights():
+            print("[!] Warning: Limited permissions detected!")
+            print("[!] For best results, run with administrator/root privileges\n")
+            time.sleep(2)
+        
+        print("[*] Scanning for WiFi networks...")
+        print("[*] Please wait...\n")
+        
+        if self.system == "Windows":
+            self.scan_windows()
+        elif self.system == "Linux":
+            self.scan_linux()
+        else:
+            print("[!] Unsupported operating system")
+            return
+        
+        if not self.networks:
+            print("[!] No networks found or WiFi is disabled!")
+        else:
+            self.display_networks()
+    
+    def scan_windows(self):
+        """Scan WiFi networks on Windows"""
+        try:
+            result = subprocess.run(
+                ['netsh', 'wlan', 'show', 'networks', 'mode=Bssid'], 
+                capture_output=True, text=True, 
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+            
+            if result.returncode != 0:
+                print("[!] Error: Make sure WiFi is enabled")
+                return
+            
+            self.parse_windows_output(result.stdout)
+            
+        except Exception as e:
+            print(f"[!] Error scanning: {e}")
+    
+    def scan_linux(self):
+        """Scan WiFi networks on Linux"""
+        try:
+            # Bring up WiFi interface
+            subprocess.run(['sudo', 'ip', 'link', 'set', 'wlan0', 'up'], 
+                         capture_output=True)
+            
+            # Scan for networks
+            result = subprocess.run(
+                ['sudo', 'iw', 'dev', 'wlan0', 'scan'], 
+                capture_output=True, text=True
+            )
+            
+            if result.returncode != 0:
+                print("[!] Error scanning. Try: sudo ip link set wlan0 up")
+                return
+            
+            self.parse_linux_output(result.stdout)
+            
+        except Exception as e:
+            print(f"[!] Error scanning: {e}")
+    
+    def parse_windows_output(self, output):
+        """Parse Windows netsh output"""
+        lines = output.split('\n')
+        current_network = {}
+        
+        for i, line in enumerate(lines):
+            line = line.strip()
+            
+            if 'SSID' in line and ':' in line and not 'BSSID' in line:
+                if current_network and 'SSID' in current_network:
+                    self.networks.append(current_network)
+                current_network = {
+                    'SSID': line.split(':', 1)[1].strip(),
+                    'Number': len(self.networks) + 1
+                }
+            
+            elif 'BSSID' in line and ':' in line:
+                current_network['BSSID'] = line.split(':', 1)[1].strip()
+            
+            elif 'Signal' in line and '%' in line:
+                signal = line.split(':', 1)[1].strip()
+                current_network['Signal'] = signal
+                # Extract just the number for sorting
+                try:
+                    current_network['Signal_Strength'] = int(signal.replace('%', ''))
+                except:
+                    current_network['Signal_Strength'] = 0
+            
+            elif 'Channel' in line:
+                current_network['Channel'] = line.split(':', 1)[1].strip()
+            
+            elif 'Authentication' in line:
+                current_network['Security'] = line.split(':', 1)[1].strip()
+        
+        if current_network and 'SSID' in current_network:
+            self.networks.append(current_network)
+        
+        # Sort by signal strength
+        self.networks.sort(key=lambda x: x.get('Signal_Strength', 0), reverse=True)
+        
+        # Renumber after sorting
+        for i, net in enumerate(self.networks, 1):
+            net['Number'] = i
+    
+    def parse_linux_output(self, output):
+        """Parse Linux iw output"""
+        # This is a simplified parser - expand based on your needs
+        print("[*] Linux scanning - Detailed parsing coming soon")
+    
+    def display_networks(self):
+        """Display networks in a formatted table"""
+        print("\n" + "="*80)
+        print(f" FOUND {len(self.networks)} NETWORKS - SCAN TIME: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("="*80)
+        
+        print(f"\n{'#':<4} {'SSID':<30} {'Signal':<10} {'Security':<15} {'Channel':<8} {'BSSID'}")
+        print("-"*80)
+        
+        for network in self.networks:
+            ssid = network.get('SSID', 'Hidden Network')[:28] + ".." if len(network.get('SSID', '')) > 28 else network.get('SSID', 'Hidden Network')
+            signal = network.get('Signal', 'N/A')
+            security = network.get('Security', 'N/A')[:13] + ".." if len(network.get('Security', '')) > 13 else network.get('Security', 'N/A')
+            channel = network.get('Channel', 'N/A')
+            bssid = network.get('BSSID', 'N/A')[:17]
+            
+            # Color code signal strength
+            signal_color = ''
+            if 'Signal_Strength' in network:
+                if network['Signal_Strength'] > 70:
+                    signal_color = '\033[92m'  # Green
+                elif network['Signal_Strength'] > 40:
+                    signal_color = '\033[93m'  # Yellow
+                else:
+                    signal_color = '\033[91m'  # Red
+                print(f"{network['Number']:<4} {ssid:<30} {signal_color}{signal:<10}\033[0m {security:<15} {channel:<8} {bssid}")
+            else:
+                print(f"{network['Number']:<4} {ssid:<30} {signal:<10} {security:<15} {channel:<8} {bssid}")
+        
+        print("\n" + "="*80)
+    
+    def show_detailed_info(self):
+        """Show detailed information for selected network"""
+        if not self.networks:
+            print("[!] No networks available. Scan first!")
+            return
+        
+        self.display_networks()
+        try:
+            choice = int(input("\n[?] Enter network number for details (0 to cancel): "))
+            if choice == 0:
+                return
+            
+            if 1 <= choice <= len(self.networks):
+                network = self.networks[choice-1]
+                self.clear_screen()
+                print(f"\n{'='*50}")
+                print(f"DETAILED INFORMATION FOR: {network.get('SSID', 'Unknown')}")
+                print('='*50)
+                for key, value in network.items():
+                    if key not in ['Number', 'Signal_Strength']:
+                        print(f"{key:15}: {value}")
+                input("\n\nPress Enter to continue...")
+        except:
+            print("[!] Invalid selection")
+            time.sleep(2)
+    
+    def export_results(self):
+        """Export results to file"""
+        if not self.networks:
+            print("[!] No networks to export")
+            return
+        
+        filename = f"toph41k_scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        
+        try:
+            with open(filename, 'w') as f:
+                f.write(f"toph41k WiFi Scan - Export File\n")
+                f.write(f"Scan Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Networks Found: {len(self.networks)}\n")
+                f.write("="*60 + "\n\n")
+                
+                for network in self.networks:
+                    f.write(f"Network #{network['Number']}\n")
+                    f.write(f"SSID: {network.get('SSID', 'Hidden')}\n")
+                    f.write(f"BSSID: {network.get('BSSID', 'N/A')}\n")
+                    f.write(f"Signal: {network.get('Signal', 'N/A')}\n")
+                    f.write(f"Channel: {network.get('Channel', 'N/A')}\n")
+                    f.write(f"Security: {network.get('Security', 'N/A')}\n")
+                    f.write("-"*40 + "\n")
+            
+            print(f"[✓] Results exported to: {filename}")
+            time.sleep(2)
+        except Exception as e:
+            print(f"[!] Error exporting: {e}")
+            time.sleep(2)
+    
+    def security_analysis(self):
+        """Analyze network security"""
+        if not self.networks:
+            print("[!] No networks to analyze")
+            return
+        
+        self.clear_screen()
+        print("\n" + "="*50)
+        print("NETWORK SECURITY ANALYSIS")
+        print("="*50)
+        
+        open_networks = 0
+        secure_networks = 0
+        wpa2_networks = 0
+        wpa3_networks = 0
+        
+        for network in self.networks:
+            security = network.get('Security', '').upper()
+            if 'OPEN' in security or 'NONE' in security:
+                open_networks += 1
+            elif 'WPA3' in security:
+                wpa3_networks += 1
+                secure_networks += 1
+            elif 'WPA2' in security:
+                wpa2_networks += 1
+                secure_networks += 1
+            elif 'WPA' in security:
+                secure_networks += 1
+        
+        print(f"\nTotal Networks: {len(self.networks)}")
+        print(f"Open Networks (Unsecured): {open_networks}")
+        print(f"Secured Networks: {secure_networks}")
+        print(f"  ├─ WPA2 Networks: {wpa2_networks}")
+        print(f"  └─ WPA3 Networks: {wpa3_networks}")
+        
+        if open_networks > 0:
+            print("\n⚠ WARNING: Open networks detected!")
+            print("These networks have no encryption and are unsafe for sensitive data!")
+        
+        input("\nPress Enter to continue...")
+    
+    def about(self):
+        """Display about information"""
+        self.clear_screen()
+        print("""
+╔══════════════════════════════════════════════════════════════╗
+║                     toph41k WiFi Scan v1.0                    ║
+╠══════════════════════════════════════════════════════════════╣
+║                                                              ║
+║  Created by: toph41k                                         ║
+║  Purpose: Professional WiFi Network Scanner                  ║
+║                                                              ║
+║  Features:                                                   ║
+║  • Scan nearby WiFi networks                                 ║
+║  • Display signal strength and security info                 ║
+║  • Export results to text file                               ║
+║  • Network security analysis                                 ║
+║                                                              ║
+║  Usage:                                                      ║
+║  1. Run with admin/root privileges for best results          ║
+║  2. Select option 1 to scan networks                         ║
+║  3. View detailed info by selecting network numbers          ║
+║                                                              ║
+║  Note: For educational and network management purposes only  ║
+║  Always respect privacy and local laws                       ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+        """)
+        input("\nPress Enter to continue...")
+    
+    def run(self):
+        """Main program loop"""
+        while True:
+            self.clear_screen()
+            self.print_banner()
+            self.print_menu()
+            
+            choice = input("\n[?] Select option (1-6): ").strip()
+            
+            if choice == '1':
+                self.scan_wifi_networks()
+                input("\nPress Enter to continue...")
+            elif choice == '2':
+                self.show_detailed_info()
+            elif choice == '3':
+                self.export_results()
+            elif choice == '4':
+                self.security_analysis()
+            elif choice == '5':
+                self.about()
+            elif choice == '6':
+                print("\n[✓] Thank you for using toph41k WiFi Scan!")
+                print("[✓] Goodbye!\n")
+                sys.exit(0)
+            else:
+                print("[!] Invalid option. Please try again.")
+                time.sleep(1)
+
+def main():
+    """Main entry point"""
+    try:
+        # Check Python version
+        if sys.version_info < (3, 6):
+            print("[!] Python 3.6 or higher is required!")
+            sys.exit(1)
+        
+        scanner = toph41kWiFiScan()
+        scanner.run()
+        
+    except KeyboardInterrupt:
+        print("\n\n[!] Scan interrupted by user")
+        print("[✓] Exiting...")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n[!] Unexpected error: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
