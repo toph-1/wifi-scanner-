@@ -1,97 +1,107 @@
 #!/bin/bash
 
-# toph41k WiFi Scan v1.0
-# A professional WiFi network scanning tool for shell
+# toph41k WiFi Scan v1.0 - Simple Version
 # Author: toph41k
 
-# Color codes for better visualization
-RED='\033[0;31m'
+# Colors
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+RED='\033[0;31m'
 BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-WHITE='\033[1;37m'
 NC='\033[0m' # No Color
-BOLD='\033[1m'
 
-# Global variables
-VERSION="1.0"
-SCAN_RESULTS="/tmp/toph41k_scan_results.txt"
-NETWORKS=()
+clear
+echo "========================================"
+echo "   toph41k WiFi Network Scanner"
+echo "========================================"
+echo ""
 
-# Function to clear screen
-clear_screen() {
-    printf "\033c"
-}
+# Check if running as root
+if [[ $EUID -ne 0 ]]; then
+    echo -e "${YELLOW}Note: Run with 'sudo' for better results${NC}"
+    echo ""
+fi
 
-# Function to print banner
-print_banner() {
-    echo -e "${BLUE}${BOLD}"
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║                 toph41k WiFi Scan v${VERSION}                      ║"
-    echo "║                  WiFi Network Scanner                        ║"
-    echo "║                  Author: toph41k                             ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
-}
-
-# Function to print menu
-print_menu() {
-    echo -e "${CYAN}${BOLD}"
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║                         MAIN MENU                             ║"
-    echo "╠══════════════════════════════════════════════════════════════╣"
-    echo "║  ${WHITE}[1]${CYAN} Scan WiFi Networks                                      ║"
-    echo "║  ${WHITE}[2]${CYAN} Show Detailed Network Info                              ║"
-    echo "║  ${WHITE}[3]${CYAN} Export Results to File                                  ║"
-    echo "║  ${WHITE}[4]${CYAN} Network Security Analysis                               ║"
-    echo "║  ${WHITE}[5]${CYAN} About & Help                                            ║"
-    echo "║  ${WHITE}[6]${CYAN} Exit                                                     ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
-}
-
-# Function to check if running as root
-check_root() {
-    if [[ $EUID -ne 0 ]]; then
-        echo -e "${YELLOW}[!] Warning: Not running as root!${NC}"
-        echo -e "${YELLOW}[!] Some features may not work properly.${NC}"
-        echo -e "${YELLOW}[!] Consider running with: sudo $0${NC}"
-        echo ""
-        sleep 2
-    fi
-}
-
-# Function to scan WiFi on Linux
-scan_linux() {
-    echo -e "${CYAN}[*] Scanning for WiFi networks...${NC}"
+# Function to scan WiFi
+scan_wifi() {
+    echo "Scanning for WiFi networks..."
+    echo "Please wait..."
+    echo ""
     
-    # Try different methods based on available tools
-    if command -v iwlist &> /dev/null; then
-        echo -e "${GREEN}[✓] Using iwlist for scanning${NC}"
-        scan_with_iwlist
-    elif command -v nmcli &> /dev/null; then
-        echo -e "${GREEN}[✓] Using nmcli for scanning${NC}"
+    # Try different scanning methods
+    if command -v nmcli &> /dev/null; then
+        # Method 1: nmcli (fastest and cleanest)
         scan_with_nmcli
-    elif command -v iw &> /dev/null; then
-        echo -e "${GREEN}[✓] Using iw for scanning${NC}"
-        scan_with_iw
+    elif command -v iwlist &> /dev/null; then
+        # Method 2: iwlist
+        scan_with_iwlist
     else
-        echo -e "${RED}[✗] No compatible WiFi scanning tool found!${NC}"
-        echo -e "${YELLOW}[!] Install wireless-tools or network-manager${NC}"
-        return 1
-    fi
-    
-    # Process and display results
-    if [[ ${#NETWORKS[@]} -gt 0 ]]; then
-        display_networks
-    else
-        echo -e "${RED}[!] No networks found or WiFi is disabled!${NC}"
+        echo -e "${RED}Error: No WiFi scanning tool found${NC}"
+        echo "Install network-manager or wireless-tools"
+        exit 1
     fi
 }
 
-# Scan with iwlist
+# Scan with nmcli
+scan_with_nmcli() {
+    # Get WiFi list
+    TEMP_FILE=$(mktemp)
+    nmcli -t -f SSID,SIGNAL,SECURITY device wifi list > "$TEMP_FILE" 2>/dev/null
+    
+    if [[ ! -s "$TEMP_FILE" ]]; then
+        echo -e "${RED}No networks found or WiFi is disabled${NC}"
+        rm "$TEMP_FILE"
+        return
+    fi
+    
+    echo "========================================"
+    echo " Available Networks"
+    echo "========================================"
+    echo ""
+    
+    # Display header
+    printf "%-4s %-30s %-10s %s\n" "No." "Network Name (SSID)" "Signal" "Security"
+    echo "------------------------------------------------"
+    
+    # Process and display each network
+    count=1
+    while IFS=: read -r ssid signal security; do
+        # Skip empty or hidden networks
+        if [[ -z "$ssid" ]] || [[ "$ssid" == "--" ]]; then
+            continue
+        fi
+        
+        # Clean up SSID
+        ssid=$(echo "$ssid" | tr -d '\\')
+        
+        # Color code signal strength
+        if [[ $signal -gt 70 ]]; then
+            signal_color="${GREEN}"
+        elif [[ $signal -gt 40 ]]; then
+            signal_color="${YELLOW}"
+        else
+            signal_color="${RED}"
+        fi
+        
+        # Truncate long SSID
+        if [[ ${#ssid} -gt 27 ]]; then
+            ssid="${ssid:0:24}..."
+        fi
+        
+        # Print network info
+        printf "%-4s %-30s ${signal_color}%-10s${NC} %s\n" \
+               "$count." "$ssid" "${signal}%" "$security"
+        
+        ((count++))
+    done < "$TEMP_FILE"
+    
+    rm "$TEMP_FILE"
+    
+    echo ""
+    echo "========================================"
+}
+
+# Scan with iwlist (backup method)
 scan_with_iwlist() {
     # Find wireless interface
     INTERFACE=$(iwconfig 2>/dev/null | grep -o '^[a-zA-Z0-9]*' | head -1)
@@ -100,417 +110,154 @@ scan_with_iwlist() {
         INTERFACE="wlan0"
     fi
     
-    echo -e "${CYAN}[*] Using interface: $INTERFACE${NC}"
-    
     # Bring interface up
     ip link set $INTERFACE up 2>/dev/null
     
-    # Perform scan
-    echo -e "${CYAN}[*] Scanning... please wait${NC}"
-    TEMP_FILE="/tmp/wifi_scan_temp.txt"
+    # Scan
+    TEMP_FILE=$(mktemp)
     iwlist $INTERFACE scan 2>/dev/null > "$TEMP_FILE"
     
     if [[ ! -s "$TEMP_FILE" ]]; then
-        echo -e "${RED}[!] Scan failed. Try: sudo iwlist $INTERFACE scan${NC}"
-        return 1
+        echo -e "${RED}No networks found${NC}"
+        rm "$TEMP_FILE"
+        return
     fi
     
-    # Parse results
-    NETWORKS=()
-    local current_network=""
-    local cell_count=0
+    echo "========================================"
+    echo " Available Networks"
+    echo "========================================"
+    echo ""
+    
+    # Display header
+    printf "%-4s %-30s %-10s\n" "No." "Network Name (SSID)" "Signal"
+    echo "------------------------------------------------"
+    
+    # Parse iwlist output
+    count=1
+    current_ssid=""
+    current_quality=""
     
     while IFS= read -r line; do
-        line=$(echo "$line" | xargs)
-        
-        if [[ "$line" =~ Cell[[:space:]]+[0-9]+ ]]; then
-            if [[ -n "$current_network" ]]; then
-                NETWORKS+=("$current_network")
+        # Extract SSID
+        if [[ "$line" =~ ESSID:\"([^\"]*)\" ]]; then
+            current_ssid="${BASH_REMATCH[1]}"
+            if [[ -z "$current_ssid" ]]; then
+                current_ssid="Hidden Network"
             fi
-            current_network=""
-            ((cell_count++))
         fi
         
-        if [[ "$line" =~ ESSID:\"(.*)\" ]]; then
-            current_network="${current_network}SSID:${BASH_REMATCH[1]}|"
-        elif [[ "$line" =~ Address:[[:space:]]*([0-9A-Fa-f:]{17}) ]]; then
-            current_network="${current_network}BSSID:${BASH_REMATCH[1]}|"
-        elif [[ "$line" =~ Channel:[[:space:]]*([0-9]+) ]]; then
-            current_network="${current_network}Channel:${BASH_REMATCH[1]}|"
-        elif [[ "$line" =~ Frequency:[[:space:]]*([0-9.]+)[[:space:]]*GHz ]]; then
-            current_network="${current_network}Frequency:${BASH_REMATCH[1]} GHz|"
-        elif [[ "$line" =~ Quality=([0-9]+)/([0-9]+) ]]; then
+        # Extract quality
+        if [[ "$line" =~ Quality=([0-9]+)/([0-9]+) ]]; then
             quality=$(((${BASH_REMATCH[1]} * 100) / ${BASH_REMATCH[2]}))
-            current_network="${current_network}Quality:${quality}%|"
-        elif [[ "$line" =~ Encryption[[:space:]]*key:(on|off) ]]; then
-            if [[ "${BASH_REMATCH[1]}" == "on" ]]; then
-                current_network="${current_network}Security:Enabled|"
-            else
-                current_network="${current_network}Security:Open|"
+            current_quality="$quality"
+            
+            # Print network when we have both SSID and quality
+            if [[ -n "$current_ssid" ]]; then
+                # Color code signal
+                if [[ $current_quality -gt 70 ]]; then
+                    signal_color="${GREEN}"
+                elif [[ $current_quality -gt 40 ]]; then
+                    signal_color="${YELLOW}"
+                else
+                    signal_color="${RED}"
+                fi
+                
+                # Truncate long SSID
+                if [[ ${#current_ssid} -gt 27 ]]; then
+                    current_ssid="${current_ssid:0:24}..."
+                fi
+                
+                printf "%-4s %-30s ${signal_color}%-10s${NC}\n" \
+                       "$count." "$current_ssid" "${current_quality}%"
+                
+                ((count++))
+                current_ssid=""
+                current_quality=""
             fi
         fi
     done < "$TEMP_FILE"
     
-    # Add last network
-    if [[ -n "$current_network" ]]; then
-        NETWORKS+=("$current_network")
-    fi
+    rm "$TEMP_FILE"
     
-    rm -f "$TEMP_FILE"
+    echo ""
+    echo "========================================"
 }
 
-# Scan with nmcli
-scan_with_nmcli() {
-    local temp_file="/tmp/nmcli_scan.txt"
-    nmcli dev wifi list > "$temp_file" 2>/dev/null
-    
-    if [[ ! -s "$temp_file" ]]; then
-        echo -e "${RED}[!] No networks found or WiFi disabled${NC}"
-        return 1
-    fi
-    
-    NETWORKS=()
-    local line_count=0
-    
-    while IFS= read -r line; do
-        ((line_count++))
-        # Skip header line
-        if [[ $line_count -eq 1 ]]; then
-            continue
-        fi
-        
-        # Parse nmcli output
-        if [[ -n "$line" ]]; then
-            # Extract SSID (first field, may contain spaces)
-            ssid=$(echo "$line" | awk '{
-                for(i=1;i<=NF;i++) {
-                    if($i ~ /^[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:/) {
-                        ssid_end=i-1
-                        break
-                    }
-                }
-                ssid=""
-                for(i=1;i<=ssid_end;i++) {
-                    ssid=ssid $i " "
-                }
-                print ssid
-            }' | xargs)
-            
-            # Extract other fields
-            bssid=$(echo "$line" | grep -oE '([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}')
-            channel=$(echo "$line" | awk '{print $NF}')
-            
-            NETWORKS+=("SSID:${ssid:-Hidden}|BSSID:${bssid:-N/A}|Security:WPA2|Channel:${channel:-N/A}|Quality:75%")
-        fi
-    done < "$temp_file"
-    
-    rm -f "$temp_file"
-}
-
-# Scan with iw
-scan_with_iw() {
-    local interface="wlan0"
-    local temp_file="/tmp/iw_scan.txt"
-    
-    ip link set $interface up 2>/dev/null
-    iw dev $interface scan > "$temp_file" 2>/dev/null
-    
-    if [[ ! -s "$temp_file" ]]; then
-        echo -e "${RED}[!] Scan failed${NC}"
-        return 1
-    fi
-    
-    NETWORKS=()
-    local current_network=""
-    
-    while IFS= read -r line; do
-        line=$(echo "$line" | xargs)
-        
-        if [[ "$line" =~ BSS[[:space:]]+([0-9a-f:]{17}) ]]; then
-            if [[ -n "$current_network" ]]; then
-                NETWORKS+=("$current_network")
-            fi
-            current_network="BSSID:${BASH_REMATCH[1]}|"
-        elif [[ "$line" =~ SSID:[[:space:]]*(.*) ]]; then
-            current_network="${current_network}SSID:${BASH_REMATCH[1]}|"
-        elif [[ "$line" =~ signal:[[:space:]]*-([0-9]+) ]]; then
-            signal=$((100 - ${BASH_REMATCH[1]}))
-            if [[ $signal -gt 100 ]]; then signal=100; fi
-            if [[ $signal -lt 0 ]]; then signal=0; fi
-            current_network="${current_network}Quality:${signal}%|"
-        fi
-    done < "$temp_file"
-    
-    if [[ -n "$current_network" ]]; then
-        NETWORKS+=("$current_network")
-    fi
-    
-    rm -f "$temp_file"
-}
-
-# Function to display networks
-display_networks() {
-    echo -e "\n${GREEN}${BOLD}════════════════════════════════════════════════════════════════${NC}"
-    echo -e "${WHITE}${BOLD} FOUND ${#NETWORKS[@]} NETWORKS - $(date '+%Y-%m-%d %H:%M:%S')${NC}"
-    echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════════${NC}"
-    
-    printf "\n${WHITE}%-4s %-30s %-10s %-15s %-8s %s${NC}\n" "#" "SSID" "Signal" "Security" "Channel" "BSSID"
-    echo -e "${BLUE}────────────────────────────────────────────────────────────────${NC}"
-    
-    local count=1
-    for network in "${NETWORKS[@]}"; do
-        # Parse network data
-        ssid=$(echo "$network" | grep -o 'SSID:[^|]*' | cut -d':' -f2-)
-        bssid=$(echo "$network" | grep -o 'BSSID:[^|]*' | cut -d':' -f2-)
-        quality=$(echo "$network" | grep -o 'Quality:[^|]*' | cut -d':' -f2- | tr -d '%')
-        channel=$(echo "$network" | grep -o 'Channel:[^|]*' | cut -d':' -f2-)
-        security=$(echo "$network" | grep -o 'Security:[^|]*' | cut -d':' -f2-)
-        
-        # Set defaults
-        ssid=${ssid:-"Hidden Network"}
-        bssid=${bssid:-"N/A"}
-        quality=${quality:-50}
-        channel=${channel:-"N/A"}
-        security=${security:-"Unknown"}
-        
-        # Truncate long SSID
-        if [[ ${#ssid} -gt 28 ]]; then
-            ssid="${ssid:0:25}..."
-        fi
-        
-        # Color code signal strength
-        if [[ $quality -gt 70 ]]; then
-            signal_color="${GREEN}"
-        elif [[ $quality -gt 40 ]]; then
-            signal_color="${YELLOW}"
-        else
-            signal_color="${RED}"
-        fi
-        
-        printf "%-4s %-30s ${signal_color}%-10s${NC} %-15s %-8s %s\n" \
-            "$count" "$ssid" "${quality}%" "${security:0:13}" "$channel" "${bssid:0:17}"
-        
-        ((count++))
-    done
-    
-    echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════════${NC}"
-}
-
-# Function to show detailed info
-show_detailed_info() {
-    if [[ ${#NETWORKS[@]} -eq 0 ]]; then
-        echo -e "${RED}[!] No networks available. Scan first!${NC}"
-        sleep 2
-        return
-    fi
-    
-    display_networks
-    
-    echo -e "\n${YELLOW}[?] Enter network number for details (0 to cancel): ${NC}"
-    read choice
-    
-    if [[ "$choice" == "0" ]]; then
-        return
-    fi
-    
-    if [[ "$choice" -ge 1 && "$choice" -le ${#NETWORKS[@]} ]]; then
-        clear_screen
-        print_banner
-        
-        local network="${NETWORKS[$((choice-1))]}"
-        echo -e "\n${GREEN}${BOLD}════════════════════════════════════════════════════════════════${NC}"
-        echo -e "${WHITE}${BOLD} DETAILED INFORMATION FOR NETWORK #$choice${NC}"
-        echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════════${NC}"
-        
-        # Parse and display all fields
-        echo "$network" | tr '|' '\n' | while read -r field; do
-            if [[ -n "$field" ]]; then
-                echo -e "${CYAN}${field%%:*}${NC}: ${field#*:}"
-            fi
-        done
-        
-        echo -e "\n${YELLOW}Press Enter to continue...${NC}"
-        read
+# Function to show details for a specific network
+show_details() {
+    if [[ $# -eq 0 ]]; then
+        echo -e "${YELLOW}Enter the network number:${NC} "
+        read num
     else
-        echo -e "${RED}[!] Invalid selection${NC}"
-        sleep 2
+        num=$1
+    fi
+    
+    # Get network details using nmcli
+    if command -v nmcli &> /dev/null; then
+        TEMP_FILE=$(mktemp)
+        nmcli -f ALL device wifi list > "$TEMP_FILE" 2>/dev/null
+        
+        # Skip header line and get the selected network
+        line_num=$((num + 1))
+        network_info=$(sed -n "${line_num}p" "$TEMP_FILE")
+        
+        if [[ -n "$network_info" ]]; then
+            echo ""
+            echo "========================================"
+            echo " Network Details"
+            echo "========================================"
+            echo "$network_info" | sed 's/^/ /'
+            echo "========================================"
+        else
+            echo -e "${RED}Network not found${NC}"
+        fi
+        
+        rm "$TEMP_FILE"
     fi
 }
 
-# Function to export results
-export_results() {
-    if [[ ${#NETWORKS[@]} -eq 0 ]]; then
-        echo -e "${RED}[!] No networks to export${NC}"
-        sleep 2
-        return
-    fi
+# Main menu
+while true; do
+    scan_wifi
     
-    local filename="toph41k_scan_$(date '+%Y%m%d_%H%M%S').txt"
+    echo ""
+    echo "Options:"
+    echo "  [1] Scan again"
+    echo "  [2] Show network details (enter number)"
+    echo "  [3] Exit"
+    echo ""
+    echo -n "Choose (1-3): "
+    read option
     
-    {
-        echo "toph41k WiFi Scan - Export File"
-        echo "Scan Date: $(date '+%Y-%m-%d %H:%M:%S')"
-        echo "Networks Found: ${#NETWORKS[@]}"
-        echo "════════════════════════════════════════════════════════════════"
-        echo ""
-        
-        local count=1
-        for network in "${NETWORKS[@]}"; do
-            echo "Network #$count"
-            echo "$network" | tr '|' '\n' | while read -r field; do
-                if [[ -n "$field" ]]; then
-                    echo "  $field"
-                fi
-            done
-            echo "────────────────────────────────────────────────"
-            ((count++))
-        done
-    } > "$filename"
-    
-    echo -e "${GREEN}[✓] Results exported to: $filename${NC}"
-    sleep 2
-}
-
-# Function for security analysis
-security_analysis() {
-    if [[ ${#NETWORKS[@]} -eq 0 ]]; then
-        echo -e "${RED}[!] No networks to analyze${NC}"
-        sleep 2
-        return
-    fi
-    
-    clear_screen
-    print_banner
-    
-    echo -e "\n${GREEN}${BOLD}════════════════════════════════════════════════════════════════${NC}"
-    echo -e "${WHITE}${BOLD} NETWORK SECURITY ANALYSIS${NC}"
-    echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════════${NC}"
-    
-    local open=0
-    local secure=0
-    local wpa2=0
-    local wpa3=0
-    local wep=0
-    
-    for network in "${NETWORKS[@]}"; do
-        security=$(echo "$network" | grep -o 'Security:[^|]*' | cut -d':' -f2- | tr '[:upper:]' '[:lower:]')
-        
-        case "$security" in
-            *open*|*none*)
-                ((open++))
-                ;;
-            *wpa3*)
-                ((wpa3++))
-                ((secure++))
-                ;;
-            *wpa2*)
-                ((wpa2++))
-                ((secure++))
-                ;;
-            *wep*)
-                ((wep++))
-                ((secure++))
-                ;;
-            *)
-                ((secure++))
-                ;;
-        esac
-    done
-    
-    echo -e "\n${WHITE}Total Networks:${NC} ${#NETWORKS[@]}"
-    echo -e "${WHITE}Open Networks (Unsecured):${NC} ${RED}$open${NC}"
-    echo -e "${WHITE}Secured Networks:${NC} ${GREEN}$secure${NC}"
-    echo -e "${WHITE}  ├─ WPA2 Networks:${NC} $wpa2"
-    echo -e "${WHITE}  ├─ WPA3 Networks:${NC} $wpa3"
-    echo -e "${WHITE}  └─ WEP Networks:${NC} ${YELLOW}$wep${NC}"
-    
-    if [[ $open -gt 0 ]]; then
-        echo -e "\n${RED}⚠ WARNING: Open networks detected!${NC}"
-        echo -e "${RED}These networks have no encryption!${NC}"
-    fi
-    
-    echo -e "\n${YELLOW}Press Enter to continue...${NC}"
-    read
-}
-
-# Function to show about info
-about() {
-    clear_screen
-    echo -e "${BLUE}${BOLD}"
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║                 toph41k WiFi Scan v${VERSION}                      ║"
-    echo "╠══════════════════════════════════════════════════════════════╣"
-    echo "║                                                              ║"
-    echo "║  Created by: toph41k                                         ║"
-    echo "║  Purpose: Professional WiFi Network Scanner                  ║"
-    echo "║  Type: Shell Script                                          ║"
-    echo "║                                                              ║"
-    echo "║  Features:                                                   ║"
-    echo "║  • Scan nearby WiFi networks                                 ║"
-    echo "║  • Display signal strength with colors                       ║"
-    echo "║  • Export results to text file                               ║"
-    echo "║  • Network security analysis                                 ║"
-    echo "║                                                              ║"
-    echo "║  Requirements:                                               ║"
-    echo "║  • Linux with wireless tools (iwlist, nmcli, or iw)         ║"
-    echo "║  • Root privileges for full functionality                    ║"
-    echo "║                                                              ║"
-    echo "║  Usage: ./toph41k_wifi_scan.sh                               ║"
-    echo "║  For best results: sudo ./toph41k_wifi_scan.sh              ║"
-    echo "║                                                              ║"
-    echo "║  Note: For educational and network management only           ║"
-    echo "║  Always respect privacy and local laws                       ║"
-    echo "║                                                              ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
-    echo -e "${YELLOW}Press Enter to continue...${NC}"
-    read
-}
-
-# Main function
-main() {
-    # Check for root
-    check_root
-    
-    # Main loop
-    while true; do
-        clear_screen
-        print_banner
-        print_menu
-        
-        echo -ne "${WHITE}[?] Select option (1-6): ${NC}"
-        read choice
-        
-        case $choice in
-            1)
-                scan_linux
-                echo -e "\n${YELLOW}Press Enter to continue...${NC}"
+    case $option in
+        1)
+            clear
+            continue
+            ;;
+        2)
+            echo ""
+            echo -n "Enter network number: "
+            read net_num
+            if [[ "$net_num" =~ ^[0-9]+$ ]]; then
+                show_details $net_num
+                echo ""
+                echo -n "Press Enter to continue..."
                 read
-                ;;
-            2)
-                show_detailed_info
-                ;;
-            3)
-                export_results
-                ;;
-            4)
-                security_analysis
-                ;;
-            5)
-                about
-                ;;
-            6)
-                echo -e "\n${GREEN}[✓] Thank you for using toph41k WiFi Scan!${NC}"
-                echo -e "${GREEN}[✓] Goodbye!${NC}\n"
-                exit 0
-                ;;
-            *)
-                echo -e "${RED}[!] Invalid option. Press Enter to continue...${NC}"
-                read
-                ;;
-        esac
-    done
-}
-
-# Run main function
-main
+            else
+                echo -e "${RED}Invalid number${NC}"
+                sleep 1
+            fi
+            clear
+            ;;
+        3)
+            echo ""
+            echo "Goodbye!"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Invalid option${NC}"
+            sleep 1
+            clear
+            ;;
+    esac
+done
